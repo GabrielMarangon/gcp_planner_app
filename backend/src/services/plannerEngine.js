@@ -98,6 +98,7 @@ export function buildPlan(payload = {}) {
     Math.min(0.02, minimumInteriorDistanceCapKm),
     minimumInteriorDistanceCapKm
   );
+  const minimumAnchorDistanceKm = clamp(polygonScale.minDimensionKm * 0.14, 0.03, 0.09);
   const planningPolygon = buildInsetPlanningPolygon(polygon, insetDistanceKm);
   const distributionInsetDistanceCapKm = Math.min(
     0.42,
@@ -109,23 +110,34 @@ export function buildPlan(payload = {}) {
     distributionInsetDistanceCapKm
   );
   const distributionPolygon = buildInsetPlanningPolygon(polygon, distributionInsetDistanceKm);
-  const frameInsetDistanceCapKm = Math.min(
-    0.46,
-    Math.max(0.035, polygonScale.minDimensionKm * 0.26)
-  );
-  const frameInsetDistanceKm = clamp(
-    Math.max(minimumInteriorDistanceKm * 1.18, distributionInsetDistanceKm * 1.04),
-    Math.min(0.03, frameInsetDistanceCapKm),
-    frameInsetDistanceCapKm
-  );
-  const framePolygon = buildInsetPlanningPolygon(polygon, frameInsetDistanceKm);
   const anchorPoint = getAnchorPoint(polygon, distributionInsetDistanceKm);
   const frameSeeds = dedupeCoordinates(
-    generateFrameSeeds(framePolygon, anchorPoint, minimumInteriorDistanceKm)
+    generateFrameSeeds(polygon, anchorPoint, minimumInteriorDistanceKm)
   );
   const minimumFrameCount = Math.min(4, frameSeeds.length);
+  const planningBoundaryLine = turf.lineString(polygon.geometry.coordinates[0]);
+  const desiredBoundaryCount = getBoundaryCoverageCount(gcpCount, minimumFrameCount);
+  const boundaryCandidates = dedupeCoordinates(
+    generateBoundaryCandidates(planningBoundaryLine, Math.max(10, gcpCount * 3)).map((coordinates) =>
+      movePointTowardAnchor(
+        coordinates,
+        anchorPoint,
+        Math.max(minimumInteriorDistanceKm * 0.35, 0.025),
+        0.08
+      )
+    )
+  );
+  const boundarySelection = farthestPointSampling(
+    filterFarFrom(
+      filterByBoundaryDistance(polygon, boundaryCandidates, Math.max(minimumInteriorDistanceKm * 0.82, 0.045)),
+      frameSeeds,
+      Math.max(0.004, minimumSpacingKm * 0.5)
+    ),
+    desiredBoundaryCount,
+    frameSeeds
+  );
 
-  const remainingGcp = Math.max(0, gcpCount - minimumFrameCount);
+  const remainingGcp = Math.max(0, gcpCount - minimumFrameCount - boundarySelection.length);
   const interiorQuota = Math.max(0, Math.round(remainingGcp * terrainRule.interiorBias));
 
   const desiredInteriorCandidateCount = gcpCount + checkpointCount + 28;
@@ -147,10 +159,14 @@ export function buildPlan(payload = {}) {
     ]);
   }
   interiorCandidates = filterFarFrom(interiorCandidates, frameSeeds);
+  const gcpInteriorCandidates = filterByAnchorDistance(interiorCandidates, anchorPoint, minimumAnchorDistanceKm);
+  const selectedInteriorPool =
+    gcpInteriorCandidates.length >= Math.max(interiorQuota + checkpointCount + 4, 8)
+      ? gcpInteriorCandidates
+      : dedupeCoordinates([...gcpInteriorCandidates, ...interiorCandidates]);
 
-  const boundarySelection = [];
   const interiorSelection = farthestPointSampling(
-    interiorCandidates,
+    selectedInteriorPool,
     interiorQuota,
     [...frameSeeds, ...boundarySelection]
   );
@@ -159,7 +175,7 @@ export function buildPlan(payload = {}) {
   if (gcpCoordinates.length < gcpCount) {
     const fallbackCandidates = filterFarFrom(
       [
-        ...interiorCandidates,
+        ...selectedInteriorPool,
         ...filterByBoundaryDistance(polygon, secondaryInteriorPool, Math.max(minimumInteriorDistanceKm * 0.72, 0.05))
       ],
       gcpCoordinates,
@@ -176,7 +192,16 @@ export function buildPlan(payload = {}) {
     pullPointInside(polygon, coordinates, minimumInteriorDistanceKm, anchorPoint)
   );
 
-  const checkpointCandidates = filterFarFrom(interiorCandidates, gcpCoordinates, minimumSpacingKm);
+  const checkpointInteriorPool = filterByAnchorDistance(
+    interiorCandidates,
+    anchorPoint,
+    minimumAnchorDistanceKm * 0.55
+  );
+  const checkpointCandidates = filterFarFrom(
+    checkpointInteriorPool.length >= checkpointCount ? checkpointInteriorPool : interiorCandidates,
+    gcpCoordinates,
+    minimumSpacingKm
+  );
   let checkpointCoordinates = farthestPointSampling(checkpointCandidates, checkpointCount, gcpCoordinates);
   if (checkpointCoordinates.length < checkpointCount) {
     const fallbackCheckpointCandidates = filterFarFrom(
@@ -600,6 +625,13 @@ function filterByBoundaryDistance(polygon, candidates, minimumDistanceKm) {
   });
 }
 
+function filterByAnchorDistance(candidates, anchorPoint, minimumDistanceKm) {
+  return candidates.filter((candidate) => {
+    const distance = turf.distance(turf.point(candidate), turf.point(anchorPoint), { units: "kilometers" });
+    return distance >= minimumDistanceKm;
+  });
+}
+
 function dedupeCoordinates(coordinates) {
   const seen = new Set();
   return coordinates.filter((coordinate) => {
@@ -667,6 +699,23 @@ function getPolygonScaleMetrics(polygon) {
     minDimensionKm,
     maxDimensionKm
   };
+}
+
+function getBoundaryCoverageCount(gcpCount, minimumFrameCount) {
+  const maxAdditionalCoverage = Math.max(0, gcpCount - minimumFrameCount - 1);
+  if (maxAdditionalCoverage === 0) {
+    return 0;
+  }
+
+  if (gcpCount >= 12) {
+    return Math.min(3, maxAdditionalCoverage);
+  }
+
+  if (gcpCount >= 8) {
+    return Math.min(2, maxAdditionalCoverage);
+  }
+
+  return Math.min(1, maxAdditionalCoverage);
 }
 
 function clamp(value, min, max) {
