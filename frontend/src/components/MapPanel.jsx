@@ -671,9 +671,9 @@ function FitToGeometry({ polygon, points, enabled, focusState, userLocation }) {
     }
 
     if (focusState.target === "points" && points.length > 0) {
-      const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lng]));
+      const bounds = buildFocusBounds(polygon, points);
       if (bounds.isValid()) {
-        map.fitBounds(bounds.pad(0.25));
+        map.fitBounds(bounds.pad(polygon ? 0.12 : 0.25));
         return;
       }
     }
@@ -691,9 +691,29 @@ function FitToGeometry({ polygon, points, enabled, focusState, userLocation }) {
         animate: true
       });
     }
-  }, [enabled, focusState, map, userLocation]);
+  }, [enabled, focusState, map, polygon, points, userLocation]);
 
   return null;
+}
+
+function buildFocusBounds(polygon, points) {
+  let bounds = null;
+
+  if (polygon) {
+    const polygonBounds = L.geoJSON(polygon).getBounds();
+    if (polygonBounds.isValid()) {
+      bounds = polygonBounds;
+    }
+  }
+
+  if (points.length > 0) {
+    const pointBounds = L.latLngBounds(points.map((point) => [point.lat, point.lng]));
+    if (pointBounds.isValid()) {
+      bounds = bounds ? bounds.extend(pointBounds) : pointBounds;
+    }
+  }
+
+  return bounds || L.latLngBounds([]);
 }
 
 function createPointIcon(label, className) {

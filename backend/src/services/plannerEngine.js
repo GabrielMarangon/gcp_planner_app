@@ -59,6 +59,7 @@ export function buildPlan(payload = {}) {
   const terrainRule = TERRAIN_RULES[params.terrain];
   const precisionRule = PRECISION_RULES[params.precision];
   const heightRule = getFlightHeightRule(params.flightHeight);
+  const polygonScale = getPolygonScaleMetrics(polygon);
   const terrainAdjustment = getTerrainAdjustment(areaRule.totalPoints, terrainRule);
   const heightAdjustment = getHeightAdjustment(areaRule.totalPoints, heightRule);
 
@@ -81,23 +82,41 @@ export function buildPlan(payload = {}) {
   }
 
   const minimumSpacingKm = getMinimumSpacing(areaSqKm, totalReferencePoints, terrainRule, heightRule);
-  const insetDistanceKm = getInsetDistance(areaSqKm, minimumSpacingKm, terrainRule, heightRule);
+  const insetDistanceKm = getInsetDistance(
+    areaSqKm,
+    minimumSpacingKm,
+    terrainRule,
+    heightRule,
+    polygonScale
+  );
+  const minimumInteriorDistanceCapKm = Math.min(
+    0.36,
+    Math.max(0.025, polygonScale.minDimensionKm * 0.18)
+  );
   const minimumInteriorDistanceKm = clamp(
     Math.max(insetDistanceKm * 1.18, minimumSpacingKm * 1.55),
-    0.08,
-    0.36
+    Math.min(0.02, minimumInteriorDistanceCapKm),
+    minimumInteriorDistanceCapKm
   );
   const planningPolygon = buildInsetPlanningPolygon(polygon, insetDistanceKm);
+  const distributionInsetDistanceCapKm = Math.min(
+    0.42,
+    Math.max(0.03, polygonScale.minDimensionKm * 0.22)
+  );
   const distributionInsetDistanceKm = clamp(
     Math.max(insetDistanceKm * 1.28, minimumInteriorDistanceKm * 1.12),
-    0.1,
-    0.42
+    Math.min(0.025, distributionInsetDistanceCapKm),
+    distributionInsetDistanceCapKm
   );
   const distributionPolygon = buildInsetPlanningPolygon(polygon, distributionInsetDistanceKm);
+  const frameInsetDistanceCapKm = Math.min(
+    0.46,
+    Math.max(0.035, polygonScale.minDimensionKm * 0.26)
+  );
   const frameInsetDistanceKm = clamp(
     Math.max(minimumInteriorDistanceKm * 1.18, distributionInsetDistanceKm * 1.04),
-    0.12,
-    0.46
+    Math.min(0.03, frameInsetDistanceCapKm),
+    frameInsetDistanceCapKm
   );
   const framePolygon = buildInsetPlanningPolygon(polygon, frameInsetDistanceKm);
   const anchorPoint = getAnchorPoint(polygon, distributionInsetDistanceKm);
@@ -591,12 +610,42 @@ function getMinimumSpacing(areaSqKm, totalReferencePoints, terrainRule, heightRu
   return clamp(baseSpacingKm * terrainRule.spacingFactor * heightRule.spacingFactor, 0.008, 0.2);
 }
 
-function getInsetDistance(areaSqKm, minimumSpacingKm, terrainRule, heightRule) {
+function getInsetDistance(areaSqKm, minimumSpacingKm, terrainRule, heightRule, polygonScale) {
   const areaBiasKm = Math.sqrt(Math.max(areaSqKm, 0.0001)) * 0.14;
   const densityInsetKm = minimumSpacingKm * 1.8;
   const terrainInsetKm = areaBiasKm * terrainRule.insetFactor;
   const heightInsetKm = minimumSpacingKm * (0.35 + heightRule.densityBoost * 0.4);
-  return clamp(Math.max(densityInsetKm, terrainInsetKm + heightInsetKm), 0.05, 0.28);
+  const insetCapKm = Math.min(0.28, Math.max(0.03, polygonScale.minDimensionKm * 0.16));
+
+  return clamp(
+    Math.max(densityInsetKm, terrainInsetKm + heightInsetKm),
+    Math.min(0.02, insetCapKm),
+    insetCapKm
+  );
+}
+
+function getPolygonScaleMetrics(polygon) {
+  const [minX, minY, maxX, maxY] = turf.bbox(polygon);
+  const widthKm = turf.distance([minX, minY], [maxX, minY], { units: "kilometers" });
+  const heightKm = turf.distance([minX, minY], [minX, maxY], { units: "kilometers" });
+  const fallbackDimensionKm = Math.sqrt(Math.max(turf.area(polygon) / 1000000, 0.0001));
+  const minDimensionKm = Math.max(
+    0.02,
+    Number.isFinite(widthKm) && Number.isFinite(heightKm)
+      ? Math.min(widthKm, heightKm)
+      : fallbackDimensionKm
+  );
+  const maxDimensionKm = Math.max(
+    minDimensionKm,
+    Number.isFinite(widthKm) && Number.isFinite(heightKm)
+      ? Math.max(widthKm, heightKm)
+      : fallbackDimensionKm
+  );
+
+  return {
+    minDimensionKm,
+    maxDimensionKm
+  };
 }
 
 function clamp(value, min, max) {
