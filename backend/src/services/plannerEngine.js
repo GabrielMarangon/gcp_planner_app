@@ -120,9 +120,8 @@ export function buildPlan(payload = {}) {
   );
   const framePolygon = buildInsetPlanningPolygon(polygon, frameInsetDistanceKm);
   const anchorPoint = getAnchorPoint(polygon, distributionInsetDistanceKm);
-  const frameBoundaryLine = turf.lineString(framePolygon.geometry.coordinates[0]);
   const frameSeeds = dedupeCoordinates(
-    generateFrameSeeds(framePolygon, frameBoundaryLine, anchorPoint, minimumInteriorDistanceKm)
+    generateFrameSeeds(framePolygon, anchorPoint, minimumInteriorDistanceKm)
   );
   const minimumFrameCount = Math.min(4, frameSeeds.length);
 
@@ -346,28 +345,13 @@ function buildExplanation(context) {
   return messages;
 }
 
-function generateCornerSeeds(polygon, boundaryLine) {
-  const [minX, minY, maxX, maxY] = turf.bbox(polygon);
-  const targets = [
-    [minX, maxY],
-    [maxX, maxY],
-    [maxX, minY],
-    [minX, minY]
-  ];
-
-  return targets.map((target) => {
-    const snapped = turf.nearestPointOnLine(boundaryLine, turf.point(target));
-    return snapped.geometry.coordinates;
-  });
-}
-
-function generateFrameSeeds(polygon, boundaryLine, anchorPoint, minimumInteriorDistanceKm) {
-  return generateCornerSeeds(polygon, boundaryLine).map((coordinates) =>
+function generateFrameSeeds(polygon, anchorPoint, minimumInteriorDistanceKm) {
+  return getRingCoordinates(polygon).map((coordinates) =>
     movePointTowardAnchor(
       coordinates,
       anchorPoint,
       Math.max(minimumInteriorDistanceKm * 0.7, 0.05),
-      0.24
+      0.14
     )
   );
 }
@@ -391,6 +375,7 @@ function generateBoundaryCandidates(boundaryLine, desiredCount) {
 function generateInteriorCandidates(polygon, desiredCount) {
   const bbox = turf.bbox(polygon);
   const areaSqKm = turf.area(polygon) / 1000000;
+  const ringSamples = generateRingSamples(polygon);
 
   let gridPoints = [];
   let cellSideKm = Math.sqrt(Math.max(areaSqKm, 0.0001) / Math.max(desiredCount * 1.8, 4));
@@ -405,8 +390,9 @@ function generateInteriorCandidates(polygon, desiredCount) {
     cellSideKm *= 0.7;
   }
 
-  const centroid = turf.centroid(polygon).geometry.coordinates;
-  return [centroid, ...gridPoints];
+  const centerOfMass = turf.centerOfMass(polygon).geometry.coordinates;
+  const representativePoint = turf.pointOnFeature(polygon).geometry.coordinates;
+  return dedupeCoordinates([centerOfMass, representativePoint, ...ringSamples, ...gridPoints]);
 }
 
 function buildInsetPlanningPolygon(polygon, insetDistanceKm) {
@@ -463,6 +449,41 @@ function pickLargestPolygon(feature) {
   }
 
   return bestCoordinates ? turf.polygon(bestCoordinates, feature.properties || {}) : null;
+}
+
+function getRingCoordinates(polygon) {
+  const ring = polygon?.geometry?.coordinates?.[0] || [];
+
+  if (ring.length <= 1) {
+    return [];
+  }
+
+  return ring.slice(0, -1);
+}
+
+function generateRingSamples(polygon) {
+  const ring = getRingCoordinates(polygon);
+  if (ring.length < 2) {
+    return [];
+  }
+
+  const samples = [...ring];
+  for (let index = 0; index < ring.length; index += 1) {
+    const current = ring[index];
+    const next = ring[(index + 1) % ring.length];
+    samples.push(interpolateCoordinates(current, next, 0.25));
+    samples.push(interpolateCoordinates(current, next, 0.5));
+    samples.push(interpolateCoordinates(current, next, 0.75));
+  }
+
+  return dedupeCoordinates(samples);
+}
+
+function interpolateCoordinates(start, end, fraction) {
+  return [
+    start[0] + (end[0] - start[0]) * fraction,
+    start[1] + (end[1] - start[1]) * fraction
+  ];
 }
 
 function pullPointInside(polygon, coordinates, minimumDistanceKm, anchorPoint) {
