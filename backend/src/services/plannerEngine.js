@@ -90,65 +90,70 @@ export function buildPlan(payload = {}) {
     Math.min(0.26, polygonScale.minDimensionKm * 0.24)
   );
   const interiorPolygon = buildInsetPlanningPolygon(polygon, interiorInsetKm);
-  const anchorPoint = getAnchorPoint(interiorPolygon);
-
-  const boundaryLine = turf.lineString(workingPolygon.geometry.coordinates[0]);
-  const boundaryCandidates = dedupeCoordinates(
-    generateBoundaryCandidates(boundaryLine, Math.max(gcpCount * 6, 24))
+  const coreInsetKm = clamp(
+    interiorInsetKm + minimumSpacingKm * 0.75,
+    interiorInsetKm * 1.18,
+    Math.min(0.38, polygonScale.minDimensionKm * 0.34)
   );
-  const boundaryVertices = getRingCoordinates(workingPolygon);
+  const corePolygon = buildInsetPlanningPolygon(polygon, coreInsetKm);
+  const anchorPoint = getAnchorPoint(interiorPolygon);
+  const minimumAnchorDistanceKm = clamp(
+    Math.max(minimumSpacingKm * 0.72, polygonScale.minDimensionKm * 0.05),
+    0.016,
+    0.06
+  );
+
+  const outerRingLine = turf.lineString(workingPolygon.geometry.coordinates[0]);
+  const middleRingLine = turf.lineString(interiorPolygon.geometry.coordinates[0]);
+  const coreRingLine = turf.lineString(corePolygon.geometry.coordinates[0]);
+  const outerRingCandidates = dedupeCoordinates(
+    generateBoundaryCandidates(outerRingLine, Math.max(totalReferencePoints * 3, 24))
+  );
+  const middleRingCandidates = dedupeCoordinates(
+    generateBoundaryCandidates(middleRingLine, Math.max(totalReferencePoints * 3, 24))
+  );
   const interiorCandidates = dedupeCoordinates(
     filterByAnchorDistance(
       filterByBoundaryDistance(
         polygon,
         generateInteriorCandidates(interiorPolygon, Math.max(totalReferencePoints * 6, 42)),
-        minimumInteriorDistanceKm * 0.95
+        minimumInteriorDistanceKm * 0.92
       ),
       anchorPoint,
-      clamp(polygonScale.minDimensionKm * 0.055, 0.018, 0.06)
+      minimumAnchorDistanceKm
     )
   );
-
-  const gcpQuotas = getGcpQuotas(gcpCount, boundaryVertices.length);
-  const cornerSeeds = selectBalancedCandidates(boundaryVertices, gcpQuotas.cornerCount, [], anchorPoint, {
-    sectorCount: Math.min(Math.max(gcpQuotas.cornerCount, 1), 8),
-    anchorWeight: 0.55
-  });
-  const boundarySelection = selectBalancedCandidates(
-    filterFarFrom(boundaryCandidates, cornerSeeds, Math.max(0.004, minimumSpacingKm * 0.58)),
-    gcpQuotas.boundaryCount,
-    cornerSeeds,
-    anchorPoint,
-    {
-      sectorCount: Math.max(4, gcpQuotas.boundaryCount * 2),
-      anchorWeight: 0.32
-    }
+  const coreCandidates = dedupeCoordinates(
+    filterByAnchorDistance(
+      filterByBoundaryDistance(
+        polygon,
+        generateInteriorCandidates(corePolygon, Math.max(totalReferencePoints * 5, 30)),
+        minimumInteriorDistanceKm * 1.05
+      ),
+      anchorPoint,
+      minimumAnchorDistanceKm
+    )
   );
-  const gcpInterior = selectBalancedCandidates(
-    filterFarFrom(interiorCandidates, [...cornerSeeds, ...boundarySelection], Math.max(0.004, minimumSpacingKm * 0.7)),
-    gcpQuotas.interiorCount,
-    [...cornerSeeds, ...boundarySelection],
-    anchorPoint,
-    {
-      sectorCount: Math.max(4, gcpQuotas.interiorCount * 2),
-      anchorWeight: 0.18
-    }
-  );
+  const fallbackCandidates = dedupeCoordinates([
+    ...middleRingCandidates,
+    ...interiorCandidates,
+    ...coreCandidates,
+    ...outerRingCandidates
+  ]);
 
-  let gcpCoordinates = [...cornerSeeds, ...boundarySelection, ...gcpInterior];
+  const outerRingGcpCount = getOuterRingGcpCount(gcpCount);
+  const middleRingGcpCount = getMiddleRingGcpCount(gcpCount, outerRingGcpCount);
+  const outerRingGcp = sampleBoundaryAnchors(outerRingLine, outerRingGcpCount, 0);
+  const middleRingGcp = sampleBoundaryAnchors(middleRingLine, middleRingGcpCount, 0.5);
+  let gcpCoordinates = [...outerRingGcp, ...middleRingGcp];
+
   if (gcpCoordinates.length < gcpCount) {
-    const fillCandidates = dedupeCoordinates([...boundaryCandidates, ...interiorCandidates]);
     gcpCoordinates = [
       ...gcpCoordinates,
-      ...selectBalancedCandidates(
-        filterFarFrom(fillCandidates, gcpCoordinates, Math.max(0.003, minimumSpacingKm * 0.52)),
+      ...farthestPointSampling(
+        filterFarFrom(fallbackCandidates, gcpCoordinates, Math.max(0.003, minimumSpacingKm * 0.58)),
         gcpCount - gcpCoordinates.length,
-        gcpCoordinates,
-        anchorPoint,
-        {
-          sectorCount: 6,
-          anchorWeight: 0.24
-        }
+        gcpCoordinates
       )
     ];
   }
@@ -159,38 +164,29 @@ export function buildPlan(payload = {}) {
     )
   ).slice(0, gcpCount);
 
-  let checkpointCoordinates = selectBalancedCandidates(
-    filterFarFrom(
-      interiorCandidates,
-      gcpCoordinates,
-      Math.max(0.003, minimumSpacingKm * 0.72)
-    ),
-    checkpointCount,
+  const checkpointRingCount = getCheckpointRingCount(checkpointCount);
+  const ringCheckpointCandidates = filterFarFrom(
+    dedupeCoordinates([
+      ...sampleBoundaryAnchors(middleRingLine, checkpointRingCount, 0.25),
+      ...sampleBoundaryAnchors(coreRingLine, Math.max(0, checkpointCount - checkpointRingCount), 0.15)
+    ]),
     gcpCoordinates,
-    anchorPoint,
-    {
-      sectorCount: Math.max(4, checkpointCount * 2),
-      anchorWeight: 0.08
-    }
+    Math.max(0.003, minimumSpacingKm * 0.38)
   );
 
+  let checkpointCoordinates = ringCheckpointCandidates.slice(0, checkpointCount);
+
   if (checkpointCoordinates.length < checkpointCount) {
-    const checkpointFillCandidates = dedupeCoordinates([...interiorCandidates, ...boundaryCandidates]);
     checkpointCoordinates = [
       ...checkpointCoordinates,
-      ...selectBalancedCandidates(
+      ...farthestPointSampling(
         filterFarFrom(
-          checkpointFillCandidates,
+          dedupeCoordinates([...coreCandidates, ...interiorCandidates, ...middleRingCandidates]),
           [...gcpCoordinates, ...checkpointCoordinates],
           Math.max(0.003, minimumSpacingKm * 0.58)
         ),
         checkpointCount - checkpointCoordinates.length,
-        [...gcpCoordinates, ...checkpointCoordinates],
-        anchorPoint,
-        {
-          sectorCount: 6,
-          anchorWeight: 0.12
-        }
+        [...gcpCoordinates, ...checkpointCoordinates]
       )
     ];
   }
@@ -199,7 +195,38 @@ export function buildPlan(payload = {}) {
     checkpointCoordinates.map((coordinates) =>
       pullPointInside(polygon, coordinates, minimumInteriorDistanceKm * 1.06, anchorPoint)
     )
-  ).slice(0, checkpointCount);
+  );
+  checkpointCoordinates = filterFarFrom(checkpointCoordinates, gcpCoordinates, 0.001);
+
+  if (checkpointCoordinates.length < checkpointCount) {
+    checkpointCoordinates = [
+      ...checkpointCoordinates,
+      ...farthestPointSampling(
+        filterFarFrom(
+          dedupeCoordinates([...coreCandidates, ...interiorCandidates, ...middleRingCandidates]),
+          [...gcpCoordinates, ...checkpointCoordinates],
+          Math.max(0.003, minimumSpacingKm * 0.52)
+        ),
+        checkpointCount - checkpointCoordinates.length,
+        [...gcpCoordinates, ...checkpointCoordinates]
+      )
+    ];
+  }
+
+  checkpointCoordinates = dedupeCoordinates(
+    checkpointCoordinates.map((coordinates) =>
+      pullPointInside(polygon, coordinates, minimumInteriorDistanceKm * 1.06, anchorPoint)
+    )
+  )
+    .filter((coordinates) =>
+      gcpCoordinates.every((point) => {
+        const distance = turf.distance(turf.point(coordinates), turf.point(point), {
+          units: "kilometers"
+        });
+        return distance > 0.001;
+      })
+    )
+    .slice(0, checkpointCount);
 
   gcpCount = gcpCoordinates.length;
   checkpointCount = checkpointCoordinates.length;
@@ -339,7 +366,7 @@ function buildExplanation(context) {
     `${context.gcpCount} pontos foram reservados como GCP e ${context.checkpointCount} como checkpoints independentes, seguindo a recomendacao de nao avaliar acuracia apenas com pontos de controle.`
   );
   messages.push(
-    "A distribuicao prioriza uma borda interna segura e uma malha interior balanceada por setores, para evitar concentracao excessiva no centro e manter folga em relacao ao limite do poligono."
+    "A distribuicao prioriza um anel externo seguro, um anel intermediario e apenas poucos pontos de preenchimento, para cobrir melhor a area sem colar no limite nem colapsar a rede no centro."
   );
   messages.push(
     "Nesta versao o relevo ainda e informado manualmente no painel e usado como proxy de variacao altimetrica. A leitura automatica de DEM ou MDT ainda nao foi integrada."
@@ -485,126 +512,91 @@ function generateInteriorCandidates(polygon, desiredCount) {
   return gridPoints;
 }
 
-function getGcpQuotas(gcpCount, vertexCount) {
-  const cornerCount = Math.min(Math.min(4, vertexCount), gcpCount);
-  let boundaryCount = 0;
-
-  if (gcpCount - cornerCount > 0) {
-    boundaryCount = Math.min(
-      Math.round(gcpCount * 0.3),
-      Math.max(0, gcpCount - cornerCount - (gcpCount >= 7 ? 2 : 0))
-    );
-    if (gcpCount >= 8) {
-      boundaryCount = Math.max(2, boundaryCount);
-    } else if (gcpCount >= 6) {
-      boundaryCount = Math.max(1, boundaryCount);
-    }
+function getOuterRingGcpCount(gcpCount) {
+  if (gcpCount <= 5) {
+    return Math.min(4, gcpCount);
   }
 
-  boundaryCount = Math.min(boundaryCount, Math.max(0, gcpCount - cornerCount));
-
-  let interiorCount = Math.max(0, gcpCount - cornerCount - boundaryCount);
-  if (gcpCount >= 8 && interiorCount < 2 && boundaryCount > 0) {
-    boundaryCount -= 1;
-    interiorCount += 1;
+  if (gcpCount <= 8) {
+    return gcpCount - 2;
   }
 
-  return {
-    cornerCount,
-    boundaryCount,
-    interiorCount
-  };
+  return Math.min(Math.max(6, Math.round(gcpCount * 0.6)), gcpCount - 2);
 }
 
-function selectBalancedCandidates(candidates, desiredCount, seedPoints, anchorPoint, options = {}) {
+function getMiddleRingGcpCount(gcpCount, outerRingGcpCount) {
+  const remaining = Math.max(0, gcpCount - outerRingGcpCount);
+  if (remaining === 0) {
+    return 0;
+  }
+
+  if (gcpCount <= 6) {
+    return Math.min(1, remaining);
+  }
+
+  if (gcpCount <= 10) {
+    return Math.min(2, remaining);
+  }
+
+  return Math.min(Math.max(2, Math.round(gcpCount * 0.22)), remaining);
+}
+
+function getCheckpointRingCount(checkpointCount) {
+  if (checkpointCount <= 1) {
+    return checkpointCount;
+  }
+
+  return Math.max(1, Math.round(checkpointCount * 0.67));
+}
+
+function sampleBoundaryAnchors(boundaryLine, count, offsetFraction = 0) {
+  if (count <= 0) {
+    return [];
+  }
+
+  const lengthKm = turf.length(boundaryLine, { units: "kilometers" });
+  if (!Number.isFinite(lengthKm) || lengthKm <= 0) {
+    return [];
+  }
+
+  const coordinates = [];
+  for (let index = 0; index < count; index += 1) {
+    const fraction = ((index + 0.5 + offsetFraction) / count) % 1;
+    const point = turf.along(boundaryLine, lengthKm * fraction, { units: "kilometers" });
+    coordinates.push(point.geometry.coordinates);
+  }
+
+  return coordinates;
+}
+
+function farthestPointSampling(candidates, desiredCount, seedPoints = []) {
   if (desiredCount <= 0 || candidates.length === 0) {
     return [];
   }
 
-  const sectorCount = Math.min(Math.max(options.sectorCount || desiredCount, 1), 12);
-  const anchorWeight = options.anchorWeight ?? 0.2;
-  const selected = [];
-  const occupied = [...seedPoints];
-  const pool = dedupeCoordinates(candidates);
-  let nextSector = 0;
+  const selected = [...seedPoints];
+  const results = [];
+  const pool = [...candidates];
 
-  while (selected.length < desiredCount && pool.length > 0) {
-    let bestPoolIndex = -1;
-    let bestScore = -Infinity;
-    let bestSector = -1;
+  while (results.length < desiredCount && pool.length > 0) {
+    let bestIndex = 0;
+    let bestDistance = -Infinity;
 
-    for (let offset = 0; offset < sectorCount; offset += 1) {
-      const sector = (nextSector + offset) % sectorCount;
-      const sectorCandidates = [];
-
-      for (let index = 0; index < pool.length; index += 1) {
-        if (getSectorIndex(pool[index], anchorPoint, sectorCount) === sector) {
-          sectorCandidates.push(index);
-        }
-      }
-
-      if (sectorCandidates.length === 0) {
-        continue;
-      }
-
-      for (const candidateIndex of sectorCandidates) {
-        const candidate = pool[candidateIndex];
-        const score = scoreCandidate(candidate, occupied, anchorPoint, anchorWeight);
-        if (score > bestScore) {
-          bestScore = score;
-          bestPoolIndex = candidateIndex;
-          bestSector = sector;
-        }
-      }
-
-      if (bestPoolIndex >= 0) {
-        break;
+    for (let index = 0; index < pool.length; index += 1) {
+      const candidate = pool[index];
+      const distance = minimumDistanceToSet(candidate, selected);
+      if (distance > bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
       }
     }
 
-    if (bestPoolIndex < 0) {
-      for (let index = 0; index < pool.length; index += 1) {
-        const candidate = pool[index];
-        const score = scoreCandidate(candidate, occupied, anchorPoint, anchorWeight);
-        if (score > bestScore) {
-          bestScore = score;
-          bestPoolIndex = index;
-          bestSector = getSectorIndex(candidate, anchorPoint, sectorCount);
-        }
-      }
-    }
-
-    if (bestPoolIndex < 0) {
-      break;
-    }
-
-    const [picked] = pool.splice(bestPoolIndex, 1);
+    const [picked] = pool.splice(bestIndex, 1);
     selected.push(picked);
-    occupied.push(picked);
-    nextSector = (bestSector + 1 + sectorCount) % sectorCount;
+    results.push(picked);
   }
 
-  return selected;
-}
-
-function scoreCandidate(candidate, occupied, anchorPoint, anchorWeight) {
-  const anchorDistance = turf.distance(turf.point(candidate), turf.point(anchorPoint), {
-    units: "kilometers"
-  });
-
-  if (!occupied.length) {
-    return anchorDistance * anchorWeight;
-  }
-
-  return minimumDistanceToSet(candidate, occupied) + anchorDistance * anchorWeight;
-}
-
-function getSectorIndex(candidate, anchorPoint, sectorCount) {
-  const deltaX = candidate[0] - anchorPoint[0];
-  const deltaY = candidate[1] - anchorPoint[1];
-  const angle = Math.atan2(deltaY, deltaX);
-  const normalized = angle >= 0 ? angle : angle + Math.PI * 2;
-  return Math.floor((normalized / (Math.PI * 2)) * sectorCount) % sectorCount;
+  return results;
 }
 
 function minimumDistanceToSet(candidate, points) {
