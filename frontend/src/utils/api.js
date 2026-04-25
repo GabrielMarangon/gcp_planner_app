@@ -1,4 +1,7 @@
-const API_BASE = (import.meta.env.VITE_API_BASE_URL || "http://localhost:3000").replace(/\/+$/, "");
+const API_BASE = (
+  import.meta.env.VITE_API_BASE_URL ||
+  (import.meta.env.DEV ? "http://localhost:3000" : "")
+).replace(/\/+$/, "");
 const REQUEST_RETRY_LIMIT = 3;
 const WARMUP_RETRY_LIMIT = 8;
 const WARMUP_DELAY_MS = 5000;

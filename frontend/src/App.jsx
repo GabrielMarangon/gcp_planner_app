@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import MapPanel from "./components/MapPanel.jsx";
 import ControlPanel from "./components/ControlPanel.jsx";
 import { calculateAreaStats, enrichPoints } from "./utils/coordinates.js";
@@ -17,6 +17,12 @@ const GEOLOCATION_OPTIONS = {
   maximumAge: 60000
 };
 
+const GEOLOCATION_FALLBACK_OPTIONS = {
+  enableHighAccuracy: false,
+  timeout: 20000,
+  maximumAge: 300000
+};
+
 export default function App() {
   const [polygon, setPolygon] = useState(null);
   const [params, setParams] = useState(DEFAULT_PARAMS);
@@ -32,6 +38,8 @@ export default function App() {
   const [locationError, setLocationError] = useState("");
   const [pointEditorEnabled, setPointEditorEnabled] = useState(false);
   const [mapFocusState, setMapFocusState] = useState({ target: "location", revision: 0 });
+  const hasRequestedLocationRef = useRef(false);
+  const locationRequestIdRef = useRef(0);
 
   const areaStats = useMemo(() => calculateAreaStats(polygon), [polygon]);
   const displaySummary = useMemo(() => {
@@ -66,6 +74,11 @@ export default function App() {
   }, [points, summary]);
 
   useEffect(() => {
+    if (hasRequestedLocationRef.current) {
+      return;
+    }
+
+    hasRequestedLocationRef.current = true;
     requestUserLocation();
   }, []);
 
@@ -74,6 +87,12 @@ export default function App() {
       setPointEditorEnabled(false);
     }
   }, [points.length]);
+
+  useEffect(() => {
+    if (userLocation && !polygon && points.length === 0) {
+      queueMapFocus("location");
+    }
+  }, [polygon, points.length, userLocation]);
 
   function handlePolygonChange(nextPolygon) {
     setPolygon(nextPolygon);
@@ -159,33 +178,62 @@ export default function App() {
     }));
   }
 
-  function requestUserLocation() {
+  async function requestUserLocation() {
     if (typeof window === "undefined" || !window.navigator?.geolocation) {
       setLocationStatus("unsupported");
       setLocationError("Geolocaliza\u00e7\u00e3o indispon\u00edvel neste navegador.");
       return;
     }
 
+    const requestId = locationRequestIdRef.current + 1;
+    locationRequestIdRef.current = requestId;
     setLocationStatus("loading");
     setLocationError("");
 
-    window.navigator.geolocation.getCurrentPosition(
-      (position) => {
-        const { latitude, longitude, accuracy } = position.coords;
-        setUserLocation({
-          lat: latitude,
-          lng: longitude,
-          accuracy: Number.isFinite(accuracy) ? accuracy : null,
-          timestamp: position.timestamp || Date.now()
-        });
-        setLocationStatus("ready");
-      },
-      (geoError) => {
-        setLocationStatus("error");
-        setLocationError(getGeolocationErrorMessage(geoError));
-      },
-      GEOLOCATION_OPTIONS
-    );
+    try {
+      const position = await getBrowserPosition(window.navigator.geolocation, GEOLOCATION_OPTIONS);
+      commitUserLocation(position, requestId);
+    } catch (geoError) {
+      if (geoError?.code === 3 || geoError?.code === 2) {
+        try {
+          const fallbackPosition = await getBrowserPosition(
+            window.navigator.geolocation,
+            GEOLOCATION_FALLBACK_OPTIONS
+          );
+          commitUserLocation(fallbackPosition, requestId);
+          return;
+        } catch (fallbackError) {
+          commitLocationError(fallbackError, requestId);
+          return;
+        }
+      }
+
+      commitLocationError(geoError, requestId);
+    }
+  }
+
+  function commitUserLocation(position, requestId) {
+    if (locationRequestIdRef.current !== requestId) {
+      return;
+    }
+
+    const { latitude, longitude, accuracy } = position.coords;
+    setUserLocation({
+      lat: latitude,
+      lng: longitude,
+      accuracy: Number.isFinite(accuracy) ? accuracy : null,
+      timestamp: position.timestamp || Date.now()
+    });
+    setLocationStatus("ready");
+  }
+
+  function commitLocationError(geoError, requestId) {
+    if (locationRequestIdRef.current !== requestId) {
+      return;
+    }
+
+    setLocationStatus("error");
+    setLocationError(getGeolocationErrorMessage(geoError));
   }
 
   async function handleExport() {
@@ -270,6 +318,12 @@ function getGeolocationErrorMessage(error) {
   }
 
   return error.message || "N\u00e3o foi poss\u00edvel identificar a localiza\u00e7\u00e3o atual.";
+}
+
+function getBrowserPosition(geolocation, options) {
+  return new Promise((resolve, reject) => {
+    geolocation.getCurrentPosition(resolve, reject, options);
+  });
 }
 
 function normalizeGeneratedPoints(points) {

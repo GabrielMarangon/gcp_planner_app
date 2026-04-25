@@ -234,45 +234,6 @@ export default function ControlPanel(props) {
               />
             </div>
 
-            {summary.breakdown ? (
-              <div className="factor-grid">
-                <FactorCard
-                  label="Base da área"
-                  value={`+${summary.breakdown.areaBasePoints}`}
-                  detail="Quantidade inicial pela área desenhada"
-                />
-                <FactorCard
-                  label="Relevo"
-                  value={`+${summary.breakdown.terrainExtraPoints}`}
-                  detail={summary.breakdown.terrainLabel}
-                />
-                <FactorCard
-                  label="Precisão"
-                  value={`+${summary.breakdown.precisionExtraPoints}`}
-                  detail={`Nível ${getPrecisionLabel(params.precision)}`}
-                />
-                <FactorCard
-                  label="Altura do voo"
-                  value={`+${summary.breakdown.flightHeightExtraPoints}`}
-                  detail={`${summary.breakdown.flightHeightLabel} (${params.flightHeight} m)`}
-                />
-                <FactorCard
-                  label="Checkpoints"
-                  value={`${summary.breakdown.requestedCheckpointPercent}%`}
-                  detail={`Efetivo ${summary.breakdown.effectiveCheckpointPercent}% na rede final`}
-                />
-                <FactorCard
-                  label="Espaçamento"
-                  value={`${summary.breakdown.minimumSpacingKm} km`}
-                  detail="Distância mínima entre candidatos"
-                />
-                <FactorCard
-                  label="Folga da borda"
-                  value={`${summary.breakdown.minimumInteriorDistanceKm} km`}
-                  detail="Distância mínima em relação ao limite"
-                />
-              </div>
-            ) : null}
           </>
         ) : (
           <p className="empty-state">
@@ -433,16 +394,6 @@ function Metric({ label, value }) {
   );
 }
 
-function FactorCard({ label, value, detail }) {
-  return (
-    <div className="factor-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      <small>{detail}</small>
-    </div>
-  );
-}
-
 function getLocationStatusLabel(status) {
   if (status === "ready") {
     return "Localizada";
@@ -461,18 +412,6 @@ function getLocationStatusLabel(status) {
   }
 
   return "Aguardando";
-}
-
-function getPrecisionLabel(precision) {
-  if (precision === "alta") {
-    return "alta";
-  }
-
-  if (precision === "baixa") {
-    return "baixa";
-  }
-
-  return "média";
 }
 
 function formatAccuracy(accuracy) {

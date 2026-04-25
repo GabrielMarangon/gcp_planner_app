@@ -290,34 +290,6 @@ button {
   margin-top: 14px;
 }
 
-.factor-grid {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.factor-card {
-  display: grid;
-  gap: 4px;
-  min-height: 88px;
-  padding: 11px;
-  border-radius: 8px;
-  background: rgba(255, 255, 255, 0.9);
-  border: 1px solid rgba(39, 52, 67, 0.08);
-}
-
-.factor-card span,
-.factor-card small {
-  color: #5f6d7d;
-  font-size: 0.78rem;
-}
-
-.factor-card strong {
-  font-size: 0.95rem;
-  font-weight: 700;
-}
-
 .message-item,
 .reference-list p,
 .empty-state,
@@ -681,7 +653,6 @@ button {
   }
 
   .metrics-grid,
-  .factor-grid,
   .info-panel__actions,
   .inline-actions,
   .action-row {

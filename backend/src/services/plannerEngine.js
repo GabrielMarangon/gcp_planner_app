@@ -83,150 +83,54 @@ export function buildPlan(payload = {}) {
     heightRule,
     polygonScale
   );
-  const workingPolygon = buildInsetPlanningPolygon(polygon, minimumInteriorDistanceKm);
-  const interiorInsetKm = clamp(
-    minimumInteriorDistanceKm + minimumSpacingKm * 0.65,
-    minimumInteriorDistanceKm * 1.18,
-    Math.min(0.26, polygonScale.minDimensionKm * 0.24)
+  const edgeClearanceKm = clamp(minimumInteriorDistanceKm * 0.58, 0.018, minimumInteriorDistanceKm);
+  const interiorClearanceKm = clamp(
+    Math.max(minimumInteriorDistanceKm * 0.92, edgeClearanceKm * 1.2),
+    edgeClearanceKm,
+    Math.max(edgeClearanceKm, minimumInteriorDistanceKm * 1.12)
   );
-  const interiorPolygon = buildInsetPlanningPolygon(polygon, interiorInsetKm);
-  const coreInsetKm = clamp(
-    interiorInsetKm + minimumSpacingKm * 0.75,
-    interiorInsetKm * 1.18,
-    Math.min(0.38, polygonScale.minDimensionKm * 0.34)
-  );
-  const corePolygon = buildInsetPlanningPolygon(polygon, coreInsetKm);
-  const anchorPoint = getAnchorPoint(interiorPolygon);
-  const minimumAnchorDistanceKm = clamp(
-    Math.max(minimumSpacingKm * 0.72, polygonScale.minDimensionKm * 0.05),
-    0.016,
-    0.06
-  );
+  const edgePolygon = buildInsetPlanningPolygon(polygon, edgeClearanceKm);
+  const interiorPolygon = buildInsetPlanningPolygon(polygon, interiorClearanceKm);
+  const anchorPoint = getAnchorPoint(polygon);
+  const orientationDegrees = getDominantAxisDegrees(polygon);
 
-  const outerRingLine = turf.lineString(workingPolygon.geometry.coordinates[0]);
-  const middleRingLine = turf.lineString(interiorPolygon.geometry.coordinates[0]);
-  const coreRingLine = turf.lineString(corePolygon.geometry.coordinates[0]);
-  const outerRingCandidates = dedupeCoordinates(
-    generateBoundaryCandidates(outerRingLine, Math.max(totalReferencePoints * 3, 24))
+  const vertexCandidates = collectVertexCandidates(polygon, edgePolygon, anchorPoint, edgeClearanceKm);
+  const edgeCandidates = collectEdgeCandidates(
+    polygon,
+    anchorPoint,
+    edgeClearanceKm,
+    Math.max(totalReferencePoints * 8, 40)
   );
-  const middleRingCandidates = dedupeCoordinates(
-    generateBoundaryCandidates(middleRingLine, Math.max(totalReferencePoints * 3, 24))
-  );
-  const interiorCandidates = dedupeCoordinates(
-    filterByAnchorDistance(
-      filterByBoundaryDistance(
-        polygon,
-        generateInteriorCandidates(interiorPolygon, Math.max(totalReferencePoints * 6, 42)),
-        minimumInteriorDistanceKm * 0.92
-      ),
-      anchorPoint,
-      minimumAnchorDistanceKm
-    )
-  );
-  const coreCandidates = dedupeCoordinates(
-    filterByAnchorDistance(
-      filterByBoundaryDistance(
-        polygon,
-        generateInteriorCandidates(corePolygon, Math.max(totalReferencePoints * 5, 30)),
-        minimumInteriorDistanceKm * 1.05
-      ),
-      anchorPoint,
-      minimumAnchorDistanceKm
-    )
-  );
-  const fallbackCandidates = dedupeCoordinates([
-    ...middleRingCandidates,
-    ...interiorCandidates,
-    ...coreCandidates,
-    ...outerRingCandidates
-  ]);
-
-  const outerRingGcpCount = getOuterRingGcpCount(gcpCount);
-  const middleRingGcpCount = getMiddleRingGcpCount(gcpCount, outerRingGcpCount);
-  const outerRingGcp = sampleBoundaryAnchors(outerRingLine, outerRingGcpCount, 0);
-  const middleRingGcp = sampleBoundaryAnchors(middleRingLine, middleRingGcpCount, 0.5);
-  let gcpCoordinates = [...outerRingGcp, ...middleRingGcp];
-
-  if (gcpCoordinates.length < gcpCount) {
-    gcpCoordinates = [
-      ...gcpCoordinates,
-      ...farthestPointSampling(
-        filterFarFrom(fallbackCandidates, gcpCoordinates, Math.max(0.003, minimumSpacingKm * 0.58)),
-        gcpCount - gcpCoordinates.length,
-        gcpCoordinates
-      )
-    ];
-  }
-
-  gcpCoordinates = dedupeCoordinates(
-    gcpCoordinates.map((coordinates) =>
-      pullPointInside(polygon, coordinates, minimumInteriorDistanceKm, anchorPoint)
-    )
-  ).slice(0, gcpCount);
-
-  const checkpointRingCount = getCheckpointRingCount(checkpointCount);
-  const ringCheckpointCandidates = filterFarFrom(
-    dedupeCoordinates([
-      ...sampleBoundaryAnchors(middleRingLine, checkpointRingCount, 0.25),
-      ...sampleBoundaryAnchors(coreRingLine, Math.max(0, checkpointCount - checkpointRingCount), 0.15)
-    ]),
-    gcpCoordinates,
-    Math.max(0.003, minimumSpacingKm * 0.38)
+  const interiorCandidates = collectInteriorCandidates(
+    polygon,
+    interiorPolygon,
+    anchorPoint,
+    orientationDegrees,
+    interiorClearanceKm,
+    Math.max(totalReferencePoints * 6, 42)
   );
 
-  let checkpointCoordinates = ringCheckpointCandidates.slice(0, checkpointCount);
+  let gcpCoordinates = selectLayeredCoveragePoints({
+    totalCount: gcpCount,
+    quotas: getGcpLayerQuotas(gcpCount, vertexCandidates.length),
+    vertexCandidates,
+    edgeCandidates,
+    interiorCandidates,
+    existingPoints: [],
+    minimumSpacingKm
+  });
 
-  if (checkpointCoordinates.length < checkpointCount) {
-    checkpointCoordinates = [
-      ...checkpointCoordinates,
-      ...farthestPointSampling(
-        filterFarFrom(
-          dedupeCoordinates([...coreCandidates, ...interiorCandidates, ...middleRingCandidates]),
-          [...gcpCoordinates, ...checkpointCoordinates],
-          Math.max(0.003, minimumSpacingKm * 0.58)
-        ),
-        checkpointCount - checkpointCoordinates.length,
-        [...gcpCoordinates, ...checkpointCoordinates]
-      )
-    ];
-  }
-
-  checkpointCoordinates = dedupeCoordinates(
-    checkpointCoordinates.map((coordinates) =>
-      pullPointInside(polygon, coordinates, minimumInteriorDistanceKm * 1.06, anchorPoint)
-    )
+  let checkpointCoordinates = selectLayeredCoveragePoints({
+    totalCount: checkpointCount,
+    quotas: getCheckpointLayerQuotas(checkpointCount, vertexCandidates.length),
+    vertexCandidates,
+    edgeCandidates,
+    interiorCandidates,
+    existingPoints: gcpCoordinates,
+    minimumSpacingKm: Math.max(0.008, minimumSpacingKm * 0.92)
+  }).filter(
+    (coordinates) => !gcpCoordinates.some((point) => toCoordinateKey(point) === toCoordinateKey(coordinates))
   );
-  checkpointCoordinates = filterFarFrom(checkpointCoordinates, gcpCoordinates, 0.001);
-
-  if (checkpointCoordinates.length < checkpointCount) {
-    checkpointCoordinates = [
-      ...checkpointCoordinates,
-      ...farthestPointSampling(
-        filterFarFrom(
-          dedupeCoordinates([...coreCandidates, ...interiorCandidates, ...middleRingCandidates]),
-          [...gcpCoordinates, ...checkpointCoordinates],
-          Math.max(0.003, minimumSpacingKm * 0.52)
-        ),
-        checkpointCount - checkpointCoordinates.length,
-        [...gcpCoordinates, ...checkpointCoordinates]
-      )
-    ];
-  }
-
-  checkpointCoordinates = dedupeCoordinates(
-    checkpointCoordinates.map((coordinates) =>
-      pullPointInside(polygon, coordinates, minimumInteriorDistanceKm * 1.06, anchorPoint)
-    )
-  )
-    .filter((coordinates) =>
-      gcpCoordinates.every((point) => {
-        const distance = turf.distance(turf.point(coordinates), turf.point(point), {
-          units: "kilometers"
-        });
-        return distance > 0.001;
-      })
-    )
-    .slice(0, checkpointCount);
 
   gcpCount = gcpCoordinates.length;
   checkpointCount = checkpointCoordinates.length;
@@ -273,6 +177,8 @@ export function buildPlan(payload = {}) {
         effectiveCheckpointPercent,
         minimumSpacingKm: Number(minimumSpacingKm.toFixed(3)),
         minimumInteriorDistanceKm: Number(minimumInteriorDistanceKm.toFixed(3)),
+        edgeClearanceKm: Number(edgeClearanceKm.toFixed(3)),
+        interiorClearanceKm: Number(interiorClearanceKm.toFixed(3)),
         reliefSource: "manual-classification"
       }
     },
@@ -366,12 +272,188 @@ function buildExplanation(context) {
     `${context.gcpCount} pontos foram reservados como GCP e ${context.checkpointCount} como checkpoints independentes, seguindo a recomendacao de nao avaliar acuracia apenas com pontos de controle.`
   );
   messages.push(
-    "A distribuicao prioriza um anel externo seguro, um anel intermediario e apenas poucos pontos de preenchimento, para cobrir melhor a area sem colar no limite nem colapsar a rede no centro."
+    "A distribuicao combina vertices, bordas e malha interior, com selecao espacial por distancia para evitar concentracao no centro e manter cobertura mais homogenea da area."
   );
   messages.push(
     "Nesta versao o relevo ainda e informado manualmente no painel e usado como proxy de variacao altimetrica. A leitura automatica de DEM ou MDT ainda nao foi integrada."
   );
   return messages;
+}
+
+function getGcpLayerQuotas(totalCount, vertexCandidateCount) {
+  if (totalCount <= 0) {
+    return { vertexCount: 0, edgeCount: 0, interiorCount: 0 };
+  }
+
+  const preferredVertexCount =
+    totalCount >= 8
+      ? Math.min(4, vertexCandidateCount)
+      : Math.min(vertexCandidateCount, Math.max(2, totalCount - 2));
+  const remaining = Math.max(0, totalCount - preferredVertexCount);
+  const edgeCount = Math.min(remaining, Math.max(0, Math.round(remaining * 0.6)));
+  const interiorCount = Math.max(0, totalCount - preferredVertexCount - edgeCount);
+
+  return {
+    vertexCount: preferredVertexCount,
+    edgeCount,
+    interiorCount
+  };
+}
+
+function getCheckpointLayerQuotas(totalCount, vertexCandidateCount) {
+  if (totalCount <= 0) {
+    return { vertexCount: 0, edgeCount: 0, interiorCount: 0 };
+  }
+
+  const vertexCount =
+    totalCount >= 5 ? Math.min(2, vertexCandidateCount) : totalCount >= 3 ? Math.min(1, vertexCandidateCount) : 0;
+  const remaining = Math.max(0, totalCount - vertexCount);
+  const edgeCount = Math.min(remaining, Math.max(1, Math.round(remaining * 0.45)));
+  const interiorCount = Math.max(0, totalCount - vertexCount - edgeCount);
+
+  return {
+    vertexCount,
+    edgeCount,
+    interiorCount
+  };
+}
+
+function selectLayeredCoveragePoints({
+  totalCount,
+  quotas,
+  vertexCandidates,
+  edgeCandidates,
+  interiorCandidates,
+  existingPoints = [],
+  minimumSpacingKm
+}) {
+  if (totalCount <= 0) {
+    return [];
+  }
+
+  const selected = [];
+  const occupied = [...existingPoints];
+  const vertexSpacingKm = Math.max(0.003, minimumSpacingKm * 0.28);
+  const edgeSpacingKm = Math.max(0.003, minimumSpacingKm * 0.38);
+  const interiorSpacingKm = Math.max(0.003, minimumSpacingKm * 0.5);
+  const fillSpacingKm = Math.max(0.003, minimumSpacingKm * 0.26);
+
+  const selectFromLayer = (candidates, desiredCount, spacingKm) => {
+    if (desiredCount <= 0) {
+      return;
+    }
+
+    const filteredCandidates = filterFarFrom(candidates, occupied, spacingKm);
+    const picks = farthestPointSampling(filteredCandidates, desiredCount, occupied);
+    selected.push(...picks);
+    occupied.push(...picks);
+  };
+
+  selectFromLayer(vertexCandidates, quotas.vertexCount, vertexSpacingKm);
+  selectFromLayer(edgeCandidates, quotas.edgeCount, edgeSpacingKm);
+  selectFromLayer(interiorCandidates, quotas.interiorCount, interiorSpacingKm);
+
+  if (selected.length < totalCount) {
+    const fillCandidates = dedupeCoordinates([
+      ...edgeCandidates,
+      ...interiorCandidates,
+      ...vertexCandidates
+    ]);
+    selectFromLayer(fillCandidates, totalCount - selected.length, fillSpacingKm);
+  }
+
+  return dedupeCoordinates(selected).slice(0, totalCount);
+}
+
+function collectVertexCandidates(polygon, insetPolygon, anchorPoint, clearanceKm) {
+  const insetBoundary = turf.lineString(insetPolygon.geometry.coordinates[0]);
+
+  return dedupeCoordinates(
+    getRingCoordinates(polygon)
+      .map((vertex) => {
+        const projected = projectPointToInsetBoundary(vertex, anchorPoint, insetBoundary);
+        return pullPointInside(polygon, projected || vertex, clearanceKm, anchorPoint);
+      })
+      .filter((coordinates) =>
+        turf.booleanPointInPolygon(turf.point(coordinates), polygon, { ignoreBoundary: false })
+      )
+  );
+}
+
+function collectEdgeCandidates(polygon, anchorPoint, clearanceKm, desiredCount) {
+  const boundaryLine = turf.lineString(polygon.geometry.coordinates[0]);
+  const rawCandidates = dedupeCoordinates([
+    ...sampleBoundaryAnchors(boundaryLine, Math.max(desiredCount, 18), 0),
+    ...sampleBoundaryAnchors(boundaryLine, Math.max(desiredCount, 18), 0.33),
+    ...sampleBoundaryAnchors(boundaryLine, Math.max(desiredCount, 18), 0.66),
+    ...generateBoundaryCandidates(boundaryLine, Math.max(desiredCount, 24))
+  ]);
+
+  return filterByBoundaryDistance(
+    polygon,
+    dedupeCoordinates(
+      rawCandidates
+        .map((coordinates) => pullPointInside(polygon, coordinates, clearanceKm, anchorPoint))
+        .filter((coordinates) =>
+          turf.booleanPointInPolygon(turf.point(coordinates), polygon, { ignoreBoundary: false })
+        )
+    ),
+    Math.max(0.01, clearanceKm * 0.82)
+  );
+}
+
+function collectInteriorCandidates(
+  polygon,
+  interiorPolygon,
+  anchorPoint,
+  orientationDegrees,
+  clearanceKm,
+  desiredCount
+) {
+  const rawCandidates = dedupeCoordinates([
+    ...generateUniformCoverageCoordinates(
+      interiorPolygon,
+      Math.max(desiredCount * 2, desiredCount + 12),
+      anchorPoint,
+      orientationDegrees
+    ),
+    ...generateInteriorCandidates(interiorPolygon, Math.max(desiredCount * 3, 24)),
+    ...generateFallbackCoverageCoordinates(
+      interiorPolygon,
+      Math.max(desiredCount * 2, 18),
+      anchorPoint,
+      orientationDegrees
+    )
+  ]);
+
+  return filterByBoundaryDistance(
+    polygon,
+    dedupeCoordinates(
+      rawCandidates
+        .map((coordinates) => pullPointInside(polygon, coordinates, clearanceKm, anchorPoint))
+        .filter((coordinates) =>
+          turf.booleanPointInPolygon(turf.point(coordinates), polygon, { ignoreBoundary: false })
+        )
+    ),
+    Math.max(0.01, clearanceKm * 0.9)
+  );
+}
+
+function projectPointToInsetBoundary(targetPoint, anchorPoint, insetBoundary) {
+  const guideLine = turf.lineString([anchorPoint, targetPoint]);
+  const intersections = turf.lineIntersect(guideLine, insetBoundary).features;
+
+  if (!intersections.length) {
+    return null;
+  }
+
+  intersections.sort((left, right) => {
+    const leftDistance = turf.distance(left, turf.point(targetPoint), { units: "kilometers" });
+    const rightDistance = turf.distance(right, turf.point(targetPoint), { units: "kilometers" });
+    return leftDistance - rightDistance;
+  });
+
+  return intersections[0].geometry.coordinates;
 }
 
 function getMinimumSpacing(areaSqKm, totalReferencePoints, terrainRule, heightRule) {
@@ -510,6 +592,205 @@ function generateInteriorCandidates(polygon, desiredCount) {
   }
 
   return gridPoints;
+}
+
+function generateUniformCoverageCoordinates(polygon, desiredCount, anchorPoint, orientationDegrees) {
+  if (desiredCount <= 0) {
+    return [];
+  }
+
+  const rotatedPolygon = turf.transformRotate(polygon, -orientationDegrees, { pivot: anchorPoint });
+  const rotatedCandidates = generateBestHexCandidates(rotatedPolygon, desiredCount);
+  const candidates = dedupeCoordinates(
+    rotatedCandidates
+      .map((coordinates) => rotateCoordinates(coordinates, orientationDegrees, anchorPoint))
+      .filter((coordinates) =>
+        turf.booleanPointInPolygon(turf.point(coordinates), polygon, { ignoreBoundary: false })
+      )
+  );
+
+  if (candidates.length <= desiredCount) {
+    return candidates;
+  }
+
+  return selectCoveragePoints(candidates, desiredCount, [], anchorPoint, orientationDegrees);
+}
+
+function generateFallbackCoverageCoordinates(polygon, desiredCount, anchorPoint, orientationDegrees) {
+  if (desiredCount <= 0) {
+    return [];
+  }
+
+  const rotatedPolygon = turf.transformRotate(polygon, -orientationDegrees, { pivot: anchorPoint });
+  const rotatedBoundary = generateBoundaryCandidates(
+    turf.lineString(rotatedPolygon.geometry.coordinates[0]),
+    Math.max(12, Math.round(desiredCount * 0.75))
+  );
+  const rotatedInterior = generateInteriorCandidates(rotatedPolygon, desiredCount);
+
+  return dedupeCoordinates(
+    [...rotatedBoundary, ...rotatedInterior]
+      .map((coordinates) => rotateCoordinates(coordinates, orientationDegrees, anchorPoint))
+      .filter((coordinates) =>
+        turf.booleanPointInPolygon(turf.point(coordinates), polygon, { ignoreBoundary: false })
+      )
+  );
+}
+
+function generateBestHexCandidates(polygon, desiredCount) {
+  const areaSqKm = turf.area(polygon) / 1000000;
+  const bbox = turf.bbox(polygon);
+  const baseCellSideKm = clamp(
+    Math.sqrt(Math.max(areaSqKm, 0.0001) / (Math.max(desiredCount, 1) * 2.598076211)),
+    0.01,
+    0.45
+  );
+  const scales = [0.5, 0.58, 0.66, 0.74, 0.82, 0.9, 0.98, 1.06, 1.14, 1.22, 1.32, 1.44];
+
+  let bestCandidates = [];
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (const scale of scales) {
+    const cellSideKm = clamp(baseCellSideKm * scale, 0.008, 0.5);
+    const grid = turf.hexGrid(bbox, cellSideKm, { units: "kilometers" });
+    const candidates = dedupeCoordinates(
+      grid.features
+        .map((feature) => turf.centerOfMass(feature).geometry.coordinates)
+        .filter((coordinates) =>
+          turf.booleanPointInPolygon(turf.point(coordinates), polygon, { ignoreBoundary: false })
+        )
+    );
+
+    if (!candidates.length) {
+      continue;
+    }
+
+    const score =
+      candidates.length >= desiredCount
+        ? candidates.length - desiredCount
+        : (desiredCount - candidates.length) * 6 + 50;
+
+    if (score < bestScore) {
+      bestScore = score;
+      bestCandidates = candidates;
+    }
+  }
+
+  return bestCandidates;
+}
+
+function selectCoveragePoints(candidates, desiredCount, existingPoints, anchorPoint, orientationDegrees) {
+  if (desiredCount <= 0) {
+    return [];
+  }
+
+  const pool = filterFarFrom(dedupeCoordinates(candidates), existingPoints, 0.001);
+  if (pool.length <= desiredCount) {
+    return pool;
+  }
+
+  const seedCount = Math.min(desiredCount, Math.max(4, Math.min(6, desiredCount)));
+  const seeds = selectExtremeSeeds(pool, anchorPoint, orientationDegrees, seedCount);
+  const remainingPool = removeSelectedCoordinates(pool, seeds);
+
+  return dedupeCoordinates([
+    ...seeds,
+    ...farthestPointSampling(
+      remainingPool,
+      desiredCount - seeds.length,
+      [...existingPoints, ...seeds]
+    )
+  ]).slice(0, desiredCount);
+}
+
+function selectExtremeSeeds(candidates, anchorPoint, orientationDegrees, maxSeedCount) {
+  if (maxSeedCount <= 0 || candidates.length === 0) {
+    return [];
+  }
+
+  const rotatedPoints = candidates.map((coordinates) => ({
+    original: coordinates,
+    rotated: rotateCoordinates(coordinates, -orientationDegrees, anchorPoint)
+  }));
+
+  const pickExtreme = (getter, direction) => {
+    return rotatedPoints.reduce((best, current) => {
+      if (!best) {
+        return current;
+      }
+
+      return direction === "min"
+        ? getter(current.rotated) < getter(best.rotated)
+          ? current
+          : best
+        : getter(current.rotated) > getter(best.rotated)
+          ? current
+          : best;
+    }, null);
+  };
+
+  const extremes = [
+    pickExtreme((coordinates) => coordinates[0], "min"),
+    pickExtreme((coordinates) => coordinates[0], "max"),
+    pickExtreme((coordinates) => coordinates[1], "min"),
+    pickExtreme((coordinates) => coordinates[1], "max"),
+    pickExtreme((coordinates) => coordinates[0] + coordinates[1], "min"),
+    pickExtreme((coordinates) => coordinates[0] + coordinates[1], "max"),
+    pickExtreme((coordinates) => coordinates[0] - coordinates[1], "min"),
+    pickExtreme((coordinates) => coordinates[0] - coordinates[1], "max")
+  ]
+    .filter(Boolean)
+    .map((item) => item.original);
+
+  const uniqueExtremes = dedupeCoordinates(extremes);
+  uniqueExtremes.sort((left, right) => {
+    const leftDistance = turf.distance(turf.point(left), turf.point(anchorPoint), {
+      units: "kilometers"
+    });
+    const rightDistance = turf.distance(turf.point(right), turf.point(anchorPoint), {
+      units: "kilometers"
+    });
+    return rightDistance - leftDistance;
+  });
+
+  return uniqueExtremes.slice(0, maxSeedCount);
+}
+
+function removeSelectedCoordinates(candidates, selected) {
+  const selectedKeys = new Set(selected.map((coordinates) => toCoordinateKey(coordinates)));
+  return candidates.filter((coordinates) => !selectedKeys.has(toCoordinateKey(coordinates)));
+}
+
+function getDominantAxisDegrees(polygon) {
+  const ring = getRingCoordinates(polygon);
+  if (ring.length < 2) {
+    return 0;
+  }
+
+  let bestAngle = 0;
+  let bestLength = -Infinity;
+
+  for (let index = 0; index < ring.length; index += 1) {
+    const current = ring[index];
+    const next = ring[(index + 1) % ring.length];
+    const lengthKm = turf.distance(turf.point(current), turf.point(next), {
+      units: "kilometers"
+    });
+
+    if (lengthKm > bestLength) {
+      bestLength = lengthKm;
+      bestAngle = (Math.atan2(next[1] - current[1], next[0] - current[0]) * 180) / Math.PI;
+    }
+  }
+
+  const normalized = ((bestAngle % 180) + 180) % 180;
+  return normalized;
+}
+
+function rotateCoordinates(coordinates, angleDegrees, pivotCoordinates) {
+  return turf.transformRotate(turf.point(coordinates), angleDegrees, {
+    pivot: pivotCoordinates
+  }).geometry.coordinates;
 }
 
 function getOuterRingGcpCount(gcpCount) {
@@ -689,13 +970,17 @@ function pullPointInside(polygon, coordinates, minimumDistanceKm, anchorPoint) {
 function dedupeCoordinates(coordinates) {
   const seen = new Set();
   return coordinates.filter((coordinate) => {
-    const key = `${coordinate[0].toFixed(7)}:${coordinate[1].toFixed(7)}`;
+    const key = toCoordinateKey(coordinate);
     if (seen.has(key)) {
       return false;
     }
     seen.add(key);
     return true;
   });
+}
+
+function toCoordinateKey(coordinate) {
+  return `${coordinate[0].toFixed(7)}:${coordinate[1].toFixed(7)}`;
 }
 
 function ensureClosedRing(coordinates) {
