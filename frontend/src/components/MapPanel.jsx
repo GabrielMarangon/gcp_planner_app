@@ -66,7 +66,7 @@ export default function MapPanel({
   pointEditorEnabled,
   mapFocusState
 }) {
-  const [mode, setMode] = useState("view");
+  const [mode, setMode] = useState(() => (polygon ? "view" : "drawing"));
   const [workingVertices, setWorkingVertices] = useState(() => polygonToLatLngs(polygon));
   const ignoreNextMapClickRef = useRef(false);
   const toolsRef = useRef(null);
@@ -206,14 +206,14 @@ export default function MapPanel({
       scrollWheelZoom={true}
     >
       <LayersControl position="topright">
-        <LayersControl.BaseLayer checked name="OpenStreetMap">
+        <LayersControl.BaseLayer name="OpenStreetMap">
           <TileLayer
             attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
             url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
           />
         </LayersControl.BaseLayer>
 
-        <LayersControl.BaseLayer name="ESRI Satelite">
+        <LayersControl.BaseLayer checked name="ESRI Satelite">
           <TileLayer
             attribution="Tiles &copy; Esri"
             url="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}"
