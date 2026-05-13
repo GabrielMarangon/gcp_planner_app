@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import * as turf from "@turf/turf";
 import MapPanel from "./components/MapPanel.jsx";
 import ControlPanel from "./components/ControlPanel.jsx";
 import { calculateAreaStats, enrichPoints } from "./utils/coordinates.js";
@@ -37,6 +38,7 @@ export default function App() {
   const [locationStatus, setLocationStatus] = useState("idle");
   const [locationError, setLocationError] = useState("");
   const [pointEditorEnabled, setPointEditorEnabled] = useState(false);
+  const [pointPlacementType, setPointPlacementType] = useState("");
   const [mapFocusState, setMapFocusState] = useState({ target: "location", revision: 0 });
   const hasRequestedLocationRef = useRef(false);
   const locationRequestIdRef = useRef(0);
@@ -83,12 +85,6 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!points.length) {
-      setPointEditorEnabled(false);
-    }
-  }, [points.length]);
-
-  useEffect(() => {
     if (userLocation && !polygon && points.length === 0) {
       queueMapFocus("location");
     }
@@ -102,6 +98,7 @@ export default function App() {
     setReferences([]);
     setError("");
     setPointEditorEnabled(false);
+    setPointPlacementType("");
     queueMapFocus(nextPolygon ? "polygon" : "location");
   }
 
@@ -121,6 +118,7 @@ export default function App() {
       setMessages(response.explanation || []);
       setReferences(response.references || []);
       setPointEditorEnabled(false);
+      setPointPlacementType("");
       queueMapFocus("points");
     } catch (requestError) {
       setError(requestError.message);
@@ -160,15 +158,57 @@ export default function App() {
   }
 
   function handleTogglePointEditor() {
-    if (!points.length) {
+    if (!polygon) {
       return;
     }
 
     const nextValue = !pointEditorEnabled;
     setPointEditorEnabled(nextValue);
-    if (nextValue) {
-      queueMapFocus("points");
+    if (!nextValue) {
+      setPointPlacementType("");
     }
+    if (nextValue) {
+      queueMapFocus(points.length > 0 ? "points" : "polygon");
+    }
+  }
+
+  function handleStartPointPlacement(nextType) {
+    if (!polygon) {
+      setError("Desenhe uma area no mapa antes de inserir pontos manualmente.");
+      return;
+    }
+
+    setPointEditorEnabled(true);
+    setPointPlacementType((currentType) => (currentType === nextType ? "" : nextType));
+    setError("");
+    queueMapFocus("polygon");
+  }
+
+  function handleCancelPointPlacement() {
+    setPointPlacementType("");
+    setError("");
+  }
+
+  function handleManualPointAdd(latlng) {
+    if (!polygon || !pointPlacementType) {
+      return;
+    }
+
+    const candidatePoint = turf.point([latlng.lng, latlng.lat]);
+    if (!turf.booleanPointInPolygon(candidatePoint, polygon, { ignoreBoundary: false })) {
+      setError("O ponto manual precisa ser inserido dentro da area do projeto.");
+      return;
+    }
+
+    const nextPoint = {
+      id: buildManualPointId(),
+      type: pointPlacementType,
+      coordinates: [latlng.lng, latlng.lat]
+    };
+
+    setPoints((currentPoints) => normalizeGeneratedPoints([...currentPoints, nextPoint]));
+    setError("");
+    queueMapFocus("points");
   }
 
   function queueMapFocus(target) {
@@ -273,6 +313,9 @@ export default function App() {
         onRemovePoint={handleRemovePoint}
         onPointTypeChange={handlePointTypeChange}
         pointEditorEnabled={pointEditorEnabled}
+        pointPlacementType={pointPlacementType}
+        onStartPointPlacement={handleStartPointPlacement}
+        onCancelPointPlacement={handleCancelPointPlacement}
         loading={loading}
         error={error}
         userLocation={userLocation}
@@ -292,6 +335,8 @@ export default function App() {
             onRemovePoint={handleRemovePoint}
             userLocation={userLocation}
             pointEditorEnabled={pointEditorEnabled}
+            pointPlacementType={pointPlacementType}
+            onManualPointAdd={handleManualPointAdd}
             mapFocusState={mapFocusState}
           />
         </div>
@@ -328,6 +373,11 @@ function getBrowserPosition(geolocation, options) {
 
 function normalizeGeneratedPoints(points) {
   return relabelPointsByType(enrichPoints(points));
+}
+
+function buildManualPointId() {
+  const randomSuffix = Math.random().toString(36).slice(2, 8);
+  return `manual-${Date.now()}-${randomSuffix}`;
 }
 
 function relabelPointsByType(points) {

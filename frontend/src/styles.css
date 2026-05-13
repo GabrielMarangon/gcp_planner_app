@@ -255,8 +255,46 @@ button {
   border-color: rgba(39, 52, 67, 0.12);
 }
 
+.ghost-button--active {
+  background: rgba(15, 109, 126, 0.14);
+  color: #0f6271;
+  border-color: rgba(15, 109, 126, 0.28);
+}
+
 .compact-button {
   width: 100%;
+}
+
+.manual-point-tools {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.manual-point-tools__row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.manual-point-tools__status,
+.manual-point-tools__hint {
+  margin: 0;
+  padding: 11px 12px;
+  border-radius: 8px;
+  border: 1px solid rgba(39, 52, 67, 0.08);
+  background: rgba(255, 255, 255, 0.9);
+  color: #4f6070;
+  font-size: 0.86rem;
+}
+
+.manual-point-tools__status {
+  display: grid;
+  gap: 10px;
+}
+
+.manual-point-tools__status p {
+  margin: 0;
 }
 
 .ghost-button--popup {
@@ -655,7 +693,8 @@ button {
   .metrics-grid,
   .info-panel__actions,
   .inline-actions,
-  .action-row {
+  .action-row,
+  .manual-point-tools__row {
     grid-template-columns: 1fr;
   }
 

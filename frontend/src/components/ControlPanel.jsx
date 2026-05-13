@@ -9,9 +9,9 @@ import {
 } from "../utils/coordinates.js";
 
 const BASE_REFERENCES = [
-  "Cho et al. (2026): GCPs no perímetro e no interior para cenários exigentes.",
-  "Sanz-Ablanedo et al. (2018): distribuição uniforme e checkpoints independentes.",
-  "Oliveira et al. (2024) e MTGIR/INCRA: considerar GSD, área, geometria, relevo e RMS."
+  "Cho et al. (2026): GCPs no perimetro e no interior para cenarios exigentes.",
+  "Sanz-Ablanedo et al. (2018): distribuicao uniforme e checkpoints independentes.",
+  "Oliveira et al. (2024) e MTGIR/INCRA: considerar GSD, area, geometria, relevo e RMS."
 ];
 
 export default function ControlPanel(props) {
@@ -32,6 +32,9 @@ export default function ControlPanel(props) {
     onRemovePoint,
     onPointTypeChange,
     pointEditorEnabled,
+    pointPlacementType,
+    onStartPointPlacement,
+    onCancelPointPlacement,
     loading,
     error,
     userLocation,
@@ -46,31 +49,31 @@ export default function ControlPanel(props) {
     return {
       guide: {
         label: "Guia",
-        title: "Guia Rápido",
+        title: "Guia Rapido",
         items: [
-          "Use Desenhar polígono para criar a área do projeto no mapa.",
-          "Use Editar vértices para ajustar a geometria e inserir novos vértices depois.",
-          "Depois de gerar a rede, você pode abrir Editar pontos para reposicionar, remover e trocar pontos entre controle e checkpoint."
+          "Use Desenhar poligono para criar a area do projeto no mapa.",
+          "Use Editar vertices para ajustar a geometria e inserir novos vertices depois.",
+          "Use Editar pontos para reposicionar, remover, trocar tipos e inserir pontos manualmente direto no mapa."
         ],
         references: []
       },
       model: {
         label: "Modelo",
-        title: "Critérios do Modelo",
+        title: "Criterios do Modelo",
         items: [
-          "O relevo ainda funciona como uma classificação manual para representar a variação altimétrica. A leitura automática de DEM ou MDT ainda não foi integrada.",
-          "O percentual de checkpoints vai de 0% a 100%. Se esse valor reduzir demais os GCPs, o app recompõe a rede para manter pelo menos 5 pontos de controle.",
-          "A densidade apresentada no painel é calculada dividindo o total de pontos gerados pela área do polígono em km²."
+          "O relevo ainda funciona como uma classificacao manual para representar a variacao altimetrica. A leitura automatica de DEM ou MDT ainda nao foi integrada.",
+          "O percentual de checkpoints vai de 0% a 100%. Se esse valor reduzir demais os GCPs, o app recompoe a rede para manter pelo menos 5 pontos de controle.",
+          "A densidade apresentada no painel e calculada dividindo o total de pontos gerados pela area do poligono em km2."
         ],
         references: BASE_REFERENCES
       },
       recommendations: {
         label: "Resultados",
-        title: "Recomendações e Referências",
+        title: "Recomendacoes e Referencias",
         items:
           messages.length > 0
             ? messages
-            : ["Gere os pontos para visualizar aqui as recomendações textuais do cenário atual."],
+            : ["Gere os pontos para visualizar aqui as recomendacoes textuais do cenario atual."],
         references: references.length > 0 ? references : BASE_REFERENCES
       }
     };
@@ -82,33 +85,33 @@ export default function ControlPanel(props) {
     <aside className="sidebar">
       <div className="sidebar-header">
         <div>
-          <p className="eyebrow">Planejamento Fotogramétrico</p>
+          <p className="eyebrow">Planejamento Fotogrametrico</p>
           <h1>GCP Planner App</h1>
         </div>
         <p className="sidebar-intro">
-          Defina uma área, ajuste o cenário de voo e gere uma distribuição inicial de GCPs e
+          Defina uma area, ajuste o cenario de voo e gere uma distribuicao inicial de GCPs e
           checkpoints para apoio de campo.
         </p>
       </div>
 
       <section className="sidebar-section">
         <div className="section-heading">
-          <h2>Área do Projeto</h2>
+          <h2>Area do Projeto</h2>
           <span className={`status-pill ${areaStats ? "status-ready" : "status-waiting"}`}>
-            {areaStats ? "Área definida" : "Aguardando polígono"}
+            {areaStats ? "Area definida" : "Aguardando poligono"}
           </span>
         </div>
         <div className="metrics-grid">
-          <Metric label="Área" value={areaStats ? formatArea(areaStats.areaSqm) : "--"} />
+          <Metric label="Area" value={areaStats ? formatArea(areaStats.areaSqm) : "--"} />
           <Metric label="Hectares" value={areaStats ? formatHectares(areaStats.areaHa) : "--"} />
-          <Metric label="km²" value={areaStats ? formatSquareKilometers(areaStats.areaSqKm) : "--"} />
-          <Metric label="Vértices" value={areaStats ? String(areaStats.vertexCount) : "--"} />
+          <Metric label="km2" value={areaStats ? formatSquareKilometers(areaStats.areaSqKm) : "--"} />
+          <Metric label="Vertices" value={areaStats ? String(areaStats.vertexCount) : "--"} />
         </div>
       </section>
 
       <section className="sidebar-section">
         <div className="section-heading">
-          <h2>Parâmetros</h2>
+          <h2>Parametros</h2>
         </div>
 
         <label className="field">
@@ -137,13 +140,13 @@ export default function ControlPanel(props) {
         </label>
 
         <label className="field">
-          <span>Nível de precisão</span>
+          <span>Nivel de precisao</span>
           <select
             value={params.precision}
             onChange={(event) => onParamsChange({ ...params, precision: event.target.value })}
           >
             <option value="baixa">Baixa</option>
-            <option value="media">Média</option>
+            <option value="media">Media</option>
             <option value="alta">Alta</option>
           </select>
         </label>
@@ -191,7 +194,7 @@ export default function ControlPanel(props) {
           </button>
           <button className="ghost-button" type="button" onClick={onClearArea} disabled={loading}>
             <ButtonIcon variant="clear" />
-            Limpar Área
+            Limpar Area
           </button>
         </div>
 
@@ -209,36 +212,79 @@ export default function ControlPanel(props) {
             className="ghost-button compact-button"
             type="button"
             onClick={onTogglePointEditor}
-            disabled={loading || !points.length}
+            disabled={loading || !areaStats}
           >
             <ButtonIcon variant="edit-points" />
-            {pointEditorEnabled ? "Encerrar edição" : "Editar pontos"}
+            {pointEditorEnabled ? "Encerrar edicao" : "Editar pontos"}
           </button>
         </div>
+
+        {pointEditorEnabled ? (
+          <div className="manual-point-tools">
+            <div className="manual-point-tools__row">
+              <button
+                className={`ghost-button compact-button ${pointPlacementType === "GCP" ? "ghost-button--active" : ""}`}
+                type="button"
+                onClick={() => onStartPointPlacement("GCP")}
+                disabled={loading}
+              >
+                <ButtonIcon variant="add-gcp" />
+                Adicionar controle
+              </button>
+              <button
+                className={`ghost-button compact-button ${pointPlacementType === "CHECKPOINT" ? "ghost-button--active" : ""}`}
+                type="button"
+                onClick={() => onStartPointPlacement("CHECKPOINT")}
+                disabled={loading}
+              >
+                <ButtonIcon variant="add-checkpoint" />
+                Adicionar checkpoint
+              </button>
+            </div>
+
+            {pointPlacementType ? (
+              <div className="manual-point-tools__status">
+                <p>
+                  Clique no mapa dentro do poligono para inserir um{" "}
+                  {pointPlacementType === "GCP" ? "controle" : "checkpoint"}.
+                </p>
+                <button
+                  className="ghost-button compact-button"
+                  type="button"
+                  onClick={onCancelPointPlacement}
+                >
+                  Cancelar insercao
+                </button>
+              </div>
+            ) : (
+              <p className="manual-point-tools__hint">
+                Ative um dos modos acima para inserir pontos manualmente sem perder os pontos ja
+                gerados.
+              </p>
+            )}
+          </div>
+        ) : null}
       </section>
 
       <section className="sidebar-section">
         <div className="section-heading">
-          <h2>Diagnóstico</h2>
+          <h2>Diagnostico</h2>
         </div>
 
         {summary ? (
-          <>
-            <div className="metrics-grid">
-              <Metric label="GCP" value={String(summary.gcpCount)} />
-              <Metric label="Checkpoints" value={String(summary.checkpointCount)} />
-              <Metric label="Total" value={String(summary.totalReferencePoints)} />
-              <Metric
-                label="Densidade"
-                value={formatDensityPerSquareKilometer(summary.densityPerSqKm)}
-              />
-            </div>
-
-          </>
+          <div className="metrics-grid">
+            <Metric label="GCP" value={String(summary.gcpCount)} />
+            <Metric label="Checkpoints" value={String(summary.checkpointCount)} />
+            <Metric label="Total" value={String(summary.totalReferencePoints)} />
+            <Metric
+              label="Densidade"
+              value={formatDensityPerSquareKilometer(summary.densityPerSqKm)}
+            />
+          </div>
         ) : (
           <p className="empty-state">
-            O app combina área, relevo, precisão e percentual de checkpoints para explicar por que uma
-            determinada rede de apoio foi sugerida.
+            O app combina area, relevo, precisao e percentual de checkpoints para explicar por que
+            uma determinada rede de apoio foi sugerida.
           </p>
         )}
 
@@ -247,7 +293,7 @@ export default function ControlPanel(props) {
 
       <section className="sidebar-section">
         <div className="section-heading">
-          <h2>Informações e Referências</h2>
+          <h2>Informacoes e Referencias</h2>
         </div>
 
         <div className="info-panel">
@@ -290,7 +336,7 @@ export default function ControlPanel(props) {
 
               {activePanel.references.length > 0 ? (
                 <div className="info-panel__references">
-                  <h4>Referências</h4>
+                  <h4>Referencias</h4>
                   {activePanel.references.map((reference) => (
                     <p key={reference} className="info-panel__reference">
                       {reference}
@@ -301,8 +347,8 @@ export default function ControlPanel(props) {
             </div>
           ) : (
             <p className="info-panel__placeholder">
-              Abra uma aba para ver as orientações do app, a lógica do modelo e as recomendações do
-              cenário gerado.
+              Abra uma aba para ver as orientacoes do app, a logica do modelo e as recomendacoes do
+              cenario gerado.
             </p>
           )}
         </div>
@@ -310,7 +356,7 @@ export default function ControlPanel(props) {
 
       <section className="sidebar-section">
         <div className="section-heading">
-          <h2>Localização</h2>
+          <h2>Localizacao</h2>
           <span className={`status-pill ${locationStatus === "ready" ? "status-ready" : "status-waiting"}`}>
             {getLocationStatusLabel(locationStatus)}
           </span>
@@ -319,12 +365,13 @@ export default function ControlPanel(props) {
         {userLocation ? (
           <div className="message-list">
             <p className="message-item">{formatLatLng(userLocation.lat, userLocation.lng)}</p>
-            <p className="message-item">Precisão estimada: {formatAccuracy(userLocation.accuracy)}</p>
+            <p className="message-item">Precisao estimada: {formatAccuracy(userLocation.accuracy)}</p>
             <p className="message-item">Atualizado em {formatTimestamp(userLocation.timestamp)}</p>
           </div>
         ) : (
           <p className="empty-state">
-            Ao permitir a geolocalização, o mapa passa a abrir perto do local onde o app está sendo usado.
+            Ao permitir a geolocalizacao, o mapa passa a abrir perto do local onde o app esta sendo
+            usado.
           </p>
         )}
 
@@ -343,7 +390,7 @@ export default function ControlPanel(props) {
 
       <section className="sidebar-section sidebar-section--stretch">
         <div className="section-heading">
-          <h2>{pointEditorEnabled ? "Editor de Pontos" : "Pontos Gerados"}</h2>
+          <h2>{pointEditorEnabled ? "Editor de Pontos" : "Pontos do Projeto"}</h2>
           <span className="count-chip">{points.length}</span>
         </div>
 
@@ -377,7 +424,8 @@ export default function ControlPanel(props) {
           </div>
         ) : (
           <p className="empty-state">
-            Os pontos aparecerão aqui com coordenadas geográficas e UTM depois da geração.
+            Gere os pontos automaticamente ou ative Editar pontos para inserir pontos manuais no
+            mapa.
           </p>
         )}
       </section>
@@ -408,7 +456,7 @@ function getLocationStatusLabel(status) {
   }
 
   if (status === "error") {
-    return "Indisponível";
+    return "Indisponivel";
   }
 
   return "Aguardando";
@@ -462,6 +510,22 @@ function ButtonIcon({ variant }) {
     return (
       <svg viewBox="0 0 24 24" aria-hidden="true">
         <path d="M4 20h4l10-10-4-4L4 16v4M14 6l4 4M9 7H5M7 11H5M13 17H5" />
+      </svg>
+    );
+  }
+
+  if (variant === "add-gcp") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 5v14M5 12h14M12 3a9 9 0 100 18 9 9 0 000-18z" />
+      </svg>
+    );
+  }
+
+  if (variant === "add-checkpoint") {
+    return (
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path d="M12 7v10M7 12h10M12 3l7 4v10l-7 4-7-4V7l7-4z" />
       </svg>
     );
   }

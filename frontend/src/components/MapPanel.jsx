@@ -64,6 +64,8 @@ export default function MapPanel({
   onRemovePoint,
   userLocation,
   pointEditorEnabled,
+  pointPlacementType,
+  onManualPointAdd,
   mapFocusState
 }) {
   const [mode, setMode] = useState(() => (polygon ? "view" : "drawing"));
@@ -101,12 +103,16 @@ export default function MapPanel({
   const midpointHandles = mode === "editing" ? buildMidpointHandles(workingVertices) : [];
   const hint =
     mode === "drawing"
-      ? "Clique no mapa para adicionar quantos vértices quiser e use Concluir quando terminar."
+      ? "Clique no mapa para adicionar quantos vertices quiser e use Concluir quando terminar."
       : mode === "editing"
-        ? "Arraste os vértices azuis. Clique nos marcadores + para inserir novos vértices."
-        : polygon
-          ? "Use Editar vértices para ajustar o polígono atual ou Novo polígono para redesenhar."
-          : "Use Desenhar polígono e clique no mapa para iniciar a área do projeto.";
+        ? "Arraste os vertices azuis. Clique nos marcadores + para inserir novos vertices."
+        : pointPlacementType
+          ? `Clique no mapa dentro do poligono para adicionar um ${
+              pointPlacementType === "GCP" ? "controle" : "checkpoint"
+            } manual.`
+          : polygon
+            ? "Use Editar vertices para ajustar o poligono atual ou Novo poligono para redesenhar."
+            : "Use Desenhar poligono e clique no mapa para iniciar a area do projeto.";
 
   function handleDragEnd(pointId, event) {
     const { lat, lng } = event.target.getLatLng();
@@ -227,6 +233,8 @@ export default function MapPanel({
       <MapInteractionController
         mode={mode}
         onAddVertex={addDraftVertex}
+        pointPlacementType={pointPlacementType}
+        onAddManualPoint={onManualPointAdd}
         ignoreNextMapClickRef={ignoreNextMapClickRef}
       />
       <UserLocationController userLocation={userLocation} polygon={polygon} points={points} />
@@ -244,6 +252,7 @@ export default function MapPanel({
         polygon={polygon}
         draftVertexCount={workingVertices.length}
         hint={hint}
+        showHint={mode !== "view" || Boolean(pointPlacementType)}
         onArmMapClickGuard={() => {
           ignoreNextMapClickRef.current = true;
         }}
@@ -271,7 +280,7 @@ export default function MapPanel({
             pathOptions={USER_LOCATION_MARKER_STYLE}
           >
             <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
-              Sua localização
+              Sua localizacao
             </Tooltip>
           </CircleMarker>
         </>
@@ -294,7 +303,7 @@ export default function MapPanel({
                   pathOptions={DRAFT_VERTEX_STYLE}
                 >
                   <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
-                    Vértice {index + 1}
+                    Vertice {index + 1}
                   </Tooltip>
                 </CircleMarker>
               ))
@@ -313,11 +322,11 @@ export default function MapPanel({
                   }}
                 >
                   <Tooltip direction="top" offset={[0, -12]} opacity={0.9}>
-                    Vértice {index + 1}
+                    Vertice {index + 1}
                   </Tooltip>
                   <Popup>
                     <div className="popup-content">
-                      <strong>Vértice {index + 1}</strong>
+                      <strong>Vertice {index + 1}</strong>
                       <p>{formatLatLng(vertex[0], vertex[1])}</p>
                       <button
                         className="ghost-button ghost-button--popup"
@@ -325,7 +334,7 @@ export default function MapPanel({
                         onClick={() => removeVertex(index)}
                         disabled={activeVertices.length <= 3}
                       >
-                        Remover vértice
+                        Remover vertice
                       </button>
                     </div>
                   </Popup>
@@ -344,7 +353,7 @@ export default function MapPanel({
                   }}
                 >
                   <Tooltip direction="top" offset={[0, -10]} opacity={0.9}>
-                    Inserir vértice
+                    Inserir vertice
                   </Tooltip>
                 </Marker>
               ))
@@ -411,7 +420,13 @@ export default function MapPanel({
   );
 }
 
-function MapInteractionController({ mode, onAddVertex, ignoreNextMapClickRef }) {
+function MapInteractionController({
+  mode,
+  onAddVertex,
+  pointPlacementType,
+  onAddManualPoint,
+  ignoreNextMapClickRef
+}) {
   const map = useMapEvents({
     click(event) {
       if (ignoreNextMapClickRef.current) {
@@ -421,6 +436,11 @@ function MapInteractionController({ mode, onAddVertex, ignoreNextMapClickRef }) 
 
       if (mode === "drawing") {
         onAddVertex(event.latlng);
+        return;
+      }
+
+      if (mode === "view" && pointPlacementType) {
+        onAddManualPoint?.(event.latlng);
       }
     }
   });
@@ -467,6 +487,7 @@ function MapTools(props) {
     polygon,
     draftVertexCount,
     hint,
+    showHint,
     onArmMapClickGuard,
     onStartDrawing,
     onCancelDrawing,
@@ -513,14 +534,14 @@ function MapTools(props) {
         {mode === "view" ? (
           <>
             <ToolbarButton
-              title={polygon ? "Novo polígono" : "Desenhar polígono"}
+              title={polygon ? "Novo poligono" : "Desenhar poligono"}
               variant="primary"
               icon="polygon"
               onArmMapClickGuard={onArmMapClickGuard}
               onClick={onStartDrawing}
             />
             <ToolbarButton
-              title="Editar vértices"
+              title="Editar vertices"
               icon="vertices"
               onArmMapClickGuard={onArmMapClickGuard}
               onClick={onStartEditing}
@@ -532,7 +553,7 @@ function MapTools(props) {
         {mode === "drawing" ? (
           <>
             <ToolbarButton
-              title="Concluir polígono"
+              title="Concluir poligono"
               variant="primary"
               icon="confirm"
               onArmMapClickGuard={onArmMapClickGuard}
@@ -540,7 +561,7 @@ function MapTools(props) {
               disabled={draftVertexCount < 3}
             />
             <ToolbarButton
-              title="Desfazer último vértice"
+              title="Desfazer ultimo vertice"
               icon="undo"
               onArmMapClickGuard={onArmMapClickGuard}
               onClick={onUndoDraftVertex}
@@ -558,14 +579,14 @@ function MapTools(props) {
         {mode === "editing" ? (
           <>
             <ToolbarButton
-              title="Salvar vértices"
+              title="Salvar vertices"
               variant="primary"
               icon="confirm"
               onArmMapClickGuard={onArmMapClickGuard}
               onClick={onFinishEditing}
             />
             <ToolbarButton
-              title="Cancelar edição"
+              title="Cancelar edicao"
               icon="close"
               onArmMapClickGuard={onArmMapClickGuard}
               onClick={onCancelEditing}
@@ -574,7 +595,7 @@ function MapTools(props) {
         ) : null}
       </div>
 
-      {mode !== "view" ? <p className="map-tools__hint">{hint}</p> : null}
+      {showHint ? <p className="map-tools__hint">{hint}</p> : null}
     </div>
   );
 }
@@ -595,7 +616,14 @@ function UserLocationController({ userLocation, polygon, points }) {
   return null;
 }
 
-function ToolbarButton({ title, icon, variant = "ghost", disabled = false, onArmMapClickGuard, onClick }) {
+function ToolbarButton({
+  title,
+  icon,
+  variant = "ghost",
+  disabled = false,
+  onArmMapClickGuard,
+  onClick
+}) {
   return (
     <button
       className={variant === "primary" ? "primary-button map-tool-icon-button" : "ghost-button map-tool-icon-button"}
