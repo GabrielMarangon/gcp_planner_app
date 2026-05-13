@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { buildPlan } from "../services/plannerEngine.js";
-import { exportCsv, exportGeoJson, exportKml } from "../services/exporters.js";
+import { exportCsv, exportGeoJson, exportGpx, exportKml } from "../services/exporters.js";
 
 const router = Router();
 
@@ -41,6 +41,13 @@ router.post("/export/:format", (req, res) => {
       res.setHeader("Content-Type", "application/vnd.google-earth.kml+xml; charset=utf-8");
       res.setHeader("Content-Disposition", "attachment; filename=gcp_planner_points.kml");
       return res.send(kml);
+    }
+
+    if (format === "gpx") {
+      const gpx = exportGpx(points);
+      res.setHeader("Content-Type", "application/gpx+xml; charset=utf-8");
+      res.setHeader("Content-Disposition", "attachment; filename=gcp_planner_points.gpx");
+      return res.send(gpx);
     }
 
     throw new Error("Formato de exportacao invalido.");

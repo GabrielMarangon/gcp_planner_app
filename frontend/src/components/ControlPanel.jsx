@@ -204,6 +204,7 @@ export default function ControlPanel(props) {
             <select value={exportFormat} onChange={(event) => onExportFormatChange(event.target.value)}>
               <option value="csv">CSV</option>
               <option value="geojson">GeoJSON</option>
+              <option value="gpx">GPX (GPS)</option>
               <option value="kml">KML</option>
             </select>
           </label>
